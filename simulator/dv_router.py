@@ -21,6 +21,8 @@ class DVRouter (basics.DVRouterBase):
 
     You probably want to do some additional initialization here.
     """
+    self.portsToLatency = {} # For a given port, returns the latency - basically a list of connected edges
+    self.routersToPort = {} # For a given router, returns the port that reaches the router with the lowest latency
     self.start_timer() # Starts calling handle_timer() at correct rate
 
   def handle_link_up (self, port, latency):
@@ -29,6 +31,8 @@ class DVRouter (basics.DVRouterBase):
 
     The port attached to the link and the link latency are passed in.
     """
+    self.portsToLatency[port] = latency
+    
 
   def handle_link_down (self, port):
     """
@@ -36,7 +40,8 @@ class DVRouter (basics.DVRouterBase):
 
     The port number used by the link is passed in.
     """
-
+    self.portsToLatency.pop(port)
+    
   def handle_rx (self, packet, port):
     """
     Called by the framework when this Entity receives a packet.
@@ -48,7 +53,14 @@ class DVRouter (basics.DVRouterBase):
     """
     #self.log("RX %s on %s (%s)", packet, port, api.current_time())
     if isinstance(packet, basics.RoutePacket):
-      pass
+          if packet.destination != None:
+            if packet.destination not in self.routersToPorts or packet.latency + self.portsToLatency[port] < self.portsToLatency[self.routersToPort[packet.destination]]:
+                self.routersToPorts[packet.destination] = port
+                    
+          else:
+            self.routersToPorts[packet.src] = port
+            self.portsToLatency[port] = packet.latency
+        
     elif isinstance(packet, basics.HostDiscoveryPacket):
       pass
     else:
@@ -63,3 +75,15 @@ class DVRouter (basics.DVRouterBase):
     When called, your router should send tables to neighbors.  It also might
     not be a bad place to check for whether any entries have expired.
     """
+    for port in self.portsToLatency:
+        if self.routersToPort:
+            for router in self.routersToPort:
+                destinationPort = self.routersToPort[router]
+                latency = self.portsToLatency[destinationPort]
+                self.send(RoutePacket(router, latency), destinationPort)
+        else:
+            latency = portsToLatency[port]
+            self.send(RoutePacket(None, latency), port)
+
+            
+            
