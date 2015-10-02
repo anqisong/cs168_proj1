@@ -11,8 +11,8 @@ INFINITY = 16
 
 class DVRouter (basics.DVRouterBase):
   #NO_LOG = True # Set to True on an instance to disable its logging
-  #POISON_MODE = True # Can override POISON_MODE here
-  #DEFAULT_TIMER_INTERVAL = 5 # Can override this yourself for testing
+  POISON_MODE = True # Can override POISON_MODE here
+  DEFAULT_TIMER_INTERVAL = 5 # Can override this yourself for testing
 
   def __init__ (self):
     """
@@ -47,6 +47,13 @@ class DVRouter (basics.DVRouterBase):
     affectedEntity = self.portsToEnts[port]
     self.set_distance_vectors(affectedEntity, affectedEntity, INFINITY)
 
+    # We need to modify all of the paths that use affected entity as an intermediary node as well.
+    for destination in self.distanceVectors:
+      distanceVector = self.distanceVectors[destination]
+      for viaEntity, distanceList in distanceVector.iteritems():
+        if viaEntity == affectedEntity:
+          self.set_distance_vectors(destination, affectedEntity, INFINITY)
+
   def handle_link_down (self, port):
     """
     Called by the framework when a link attached to this Entity does down.
@@ -72,11 +79,13 @@ class DVRouter (basics.DVRouterBase):
         self.set_distance_vectors(packet.src, packet.src, packet.latency)
         self.portsToEnts[port] = packet.src
         self.entsToPorts[packet.src] = port
-      else:
+      elif packet.destination != packet.src: # Useless information... this is always 0
         # Always update our distance vector table - we can figure out the best path later
+        print("Destination: " + str(packet.destination) + " Source: " + str(packet.src))
         totalLatency = packet.latency + self.portsToLatencies[port]
         self.set_distance_vectors(packet.destination, packet.src, totalLatency)
     elif isinstance(packet, basics.HostDiscoveryPacket):
+
       self.set_distance_vectors(packet.src, packet.src, 0)
       self.portsToEnts[port] = packet.src
       self.entsToPorts[packet.src] = port
@@ -85,7 +94,6 @@ class DVRouter (basics.DVRouterBase):
       # the packet back to where it came from!
       bestPort = self.get_best_port_to_entity(packet.dst)
       if self.is_valid_port(bestPort):
-        print(bestPort)
         self.send(packet, port=bestPort)
 
   def set_distance_vectors(self, destination, viaEntity, distance):
@@ -93,22 +101,16 @@ class DVRouter (basics.DVRouterBase):
     Sets distanceVector[destination][viaEntity] = distance if the table exists.
     Creates the table if it doesn't. Also sends out updates where necessary.
     """
-    # Don't set the distance vector if it's to ourself...
-    if destination == self:
-        return
-
     if destination not in self.distanceVectors:
         self.distanceVectors[destination] = {}
 
     previousMinDistance = self.min_distance_to(destination)
-
     self.distanceVectors[destination][viaEntity] = [distance, api.current_time()]
-
     newMinDistance = self.min_distance_to(destination)
 
     # If the routing table changes, we want to send out the corresponding updates
     if previousMinDistance != newMinDistance:
-        print(str(previousMinDistance) + " is now " + str(newMinDistance))
+        #print("Self: " + str(self) + "Destination: " + str(destination) + "; viaEntity: " + str(viaEntity) + str(previousMinDistance) + " is now " + str(newMinDistance))
         if self.POISON_MODE or not self.is_infinity(distance):
             self.send_packet_to_all_valid_neighbors(basics.RoutePacket(destination, distance))
 
@@ -129,8 +131,8 @@ class DVRouter (basics.DVRouterBase):
     for destination in self.distanceVectors:
         distanceVector = self.distanceVectors[destination]
         for viaEntity in distanceVector:
-            # Don't expire host links!
-            if not isinstance(viaEntity, basics.BasicHost) and api.current_time() - distanceVector[viaEntity][1] >= 15:
+            # Don't expire host links or distances to yourself (who cares about that)
+            if not isinstance(viaEntity, basics.BasicHost) and api.current_time() - distanceVector[viaEntity][1] >= 15 and destination != viaEntity:
                 self.set_distance_vectors(destination, viaEntity, INFINITY)
 
   def send_all_vectors_to_all_valid_neighbors(self):
