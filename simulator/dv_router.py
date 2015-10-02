@@ -155,7 +155,7 @@ class DVRouter (basics.DVRouterBase):
     """
     for destination in self.distanceVectors:
         minDistance = self.min_distance_to(destination)
-        if self.POISON_MODE or not self.is_infinity(minDistance):
+        if (self.POISON_MODE or not self.is_infinity(minDistance)) and (self.portsToEnts[port] not in self.distanceVectors[destination] or self.distanceVectors[destination][self.portsToEnts[port]][0] != minDistance):
             self.send(basics.RoutePacket(destination, minDistance), port)
 
   def get_best_port_to_entity(self, entity):
