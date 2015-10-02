@@ -85,8 +85,7 @@ class DVRouter (basics.DVRouterBase):
         totalLatency = packet.latency + self.portsToLatencies[port]
         self.set_distance_vectors(packet.destination, packet.src, totalLatency)
     elif isinstance(packet, basics.HostDiscoveryPacket):
-
-      self.set_distance_vectors(packet.src, packet.src, 0)
+      self.set_distance_vectors(packet.src, packet.src, self.portsToLatencies[port])
       self.portsToEnts[port] = packet.src
       self.entsToPorts[packet.src] = port
     else:
@@ -110,7 +109,7 @@ class DVRouter (basics.DVRouterBase):
 
     # If the routing table changes, we want to send out the corresponding updates
     if previousMinDistance != newMinDistance:
-        #print("Self: " + str(self) + "Destination: " + str(destination) + "; viaEntity: " + str(viaEntity) + str(previousMinDistance) + " is now " + str(newMinDistance))
+        print("Self: " + str(self) + "Destination: " + str(destination) + "; viaEntity: " + str(viaEntity) + str(previousMinDistance) + " is now " + str(newMinDistance))
         if self.POISON_MODE or not self.is_infinity(distance):
             self.send_packet_to_all_valid_neighbors(basics.RoutePacket(destination, distance))
 
