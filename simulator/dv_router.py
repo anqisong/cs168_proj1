@@ -12,7 +12,7 @@ INFINITY = 16
 class DVRouter (basics.DVRouterBase):
   #NO_LOG = True # Set to True on an instance to disable its logging
   POISON_MODE = True # Can override POISON_MODE here
-  DEFAULT_TIMER_INTERVAL = 5 # Can override this yourself for testing
+  #DEFAULT_TIMER_INTERVAL = 5 # Can override this yourself for testing
 
   def __init__ (self):
     """
@@ -37,7 +37,10 @@ class DVRouter (basics.DVRouterBase):
     # Notify the entity on the other side that we exist - the other entity will do the same for us.
     # Also set up our port latencies here. We're assuming that they won't change midway (unless the port expires, at which point they'll be INFINITY)
     self.portsToLatencies[port] = latency
-    self.send(basics.RoutePacket(None, latency), port)
+    if not self.distanceVectors:
+      self.send(basics.RoutePacket(None, latency), port)
+    else:
+      self.send_all_vectors_to(port)
 
   def nullify_port (self, port):
     """
@@ -92,7 +95,7 @@ class DVRouter (basics.DVRouterBase):
       # Totally wrong behavior for the sake of demonstration only: send
       # the packet back to where it came from!
       bestPort = self.get_best_port_to_entity(packet.dst)
-      if self.is_valid_port(bestPort):
+      if self.is_valid_port(bestPort) && bestPort != port:
         self.send(packet, port=bestPort)
 
   def set_distance_vectors(self, destination, viaEntity, distance):
@@ -110,8 +113,8 @@ class DVRouter (basics.DVRouterBase):
     # If the routing table changes, we want to send out the corresponding updates
     if previousMinDistance != newMinDistance:
         print("Self: " + str(self) + "Destination: " + str(destination) + "; viaEntity: " + str(viaEntity) + str(previousMinDistance) + " is now " + str(newMinDistance))
-        if self.POISON_MODE or not self.is_infinity(distance):
-            self.send_packet_to_all_valid_neighbors(basics.RoutePacket(destination, distance))
+        if self.POISON_MODE or not self.is_infinity(newMinDistance):
+            self.send_packet_to_all_valid_neighbors(basics.RoutePacket(destination, newMinDistance))
 
   def handle_timer (self):
     """
@@ -147,7 +150,8 @@ class DVRouter (basics.DVRouterBase):
     Sends the specified packet to all valid (non-host) neighbors
     """
     for port, entity in self.portsToEnts.iteritems():
-        if not isinstance(entity, basics.BasicHost): # We don't want to send this information to hosts
+        minDistance = self.min_distance_to(packet.destination)
+        if not isinstance(entity, basics.BasicHost) and (self.portsToEnts[port] not in self.distanceVectors[packet.destination] or self.distanceVectors[packet.destination][self.portsToEnts[port]][0] != minDistance): # We don't want to send this information to hosts
             self.send(packet, port)
 
   def send_all_vectors_to(self, port):
