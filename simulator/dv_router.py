@@ -11,7 +11,7 @@ INFINITY = 16
 
 class DVRouter (basics.DVRouterBase):
   #NO_LOG = True # Set to True on an instance to disable its logging
-  POISON_MODE = True # Can override POISON_MODE here
+  #POISON_MODE = True # Can override POISON_MODE here
   #DEFAULT_TIMER_INTERVAL = 5 # Can override this yourself for testing
 
   def __init__ (self):
@@ -36,11 +36,31 @@ class DVRouter (basics.DVRouterBase):
     """
     # Notify the entity on the other side that we exist - the other entity will do the same for us.
     # Also set up our port latencies here. We're assuming that they won't change midway (unless the port expires, at which point they'll be INFINITY)
+    print("Link up called")
+
+    self.portsToEnts[port] = None
+
+    oldLatency = latency
+    if port in self.portsToLatencies:
+      oldLatency = self.portsToLatencies[port]
+
     self.portsToLatencies[port] = latency
-    if not self.distanceVectors:
-      self.send(basics.RoutePacket(None, latency), port)
-    else:
-      self.send_all_vectors_to(port)
+
+    # if not self.distanceVectors:
+    #   self.send(basics.RoutePacket(None, latency), port)
+    # else:
+    if port in self.portsToEnts:
+      affectedEntity = self.portsToEnts[port]
+
+      for destination in self.distanceVectors:
+        distanceVector = self.distanceVectors[destination]
+        for viaEntity, distanceList in distanceVector.iteritems():
+          if viaEntity == affectedEntity:
+            oldDistance = self.distanceVectors[destination][viaEntity][0]
+            newDistance = oldDistance - oldLatency + latency
+            self.set_distance_vectors(destination, affectedEntity, newDistance)
+
+    self.send_all_vectors_to(port)
 
   def nullify_port (self, port):
     """
@@ -48,7 +68,7 @@ class DVRouter (basics.DVRouterBase):
     """
     self.portsToLatencies[port] = INFINITY
     affectedEntity = self.portsToEnts[port]
-    self.set_distance_vectors(affectedEntity, affectedEntity, INFINITY)
+    # self.set_distance_vectors(affectedEntity, affectedEntity, INFINITY)
 
     # We need to modify all of the paths that use affected entity as an intermediary node as well.
     for destination in self.distanceVectors:
@@ -78,15 +98,19 @@ class DVRouter (basics.DVRouterBase):
     #self.log("RX %s on %s (%s)", packet, port, api.current_time())
     if isinstance(packet, basics.RoutePacket):
       # If we get a packet with no destination, we know it comes from handle_link_up and can establish neighborly relations
-      if packet.destination == None:
-        self.set_distance_vectors(packet.src, packet.src, packet.latency)
-        self.portsToEnts[port] = packet.src
-        self.entsToPorts[packet.src] = port
-      elif packet.destination != packet.src: # Useless information... this is always 0
+      # if packet.destination == None:
+      #   # self.set_distance_vectors(packet.src, packet.src, packet.latency)
+        # self.portsToEnts[port] = packet.src
+        # self.entsToPorts[packet.src] = port
+      # elif packet.destination != packet.src: # Useless information... this is always 0
         # Always update our distance vector table - we can figure out the best path later
-        print("Destination: " + str(packet.destination) + " Source: " + str(packet.src))
-        totalLatency = packet.latency + self.portsToLatencies[port]
-        self.set_distance_vectors(packet.destination, packet.src, totalLatency)
+        # print("Destination: " + str(packet.destination) + " Source: " + str(packet.src))
+        # print(str(self) + "received packet with destination " + str(packet.destination) + " from " + str(packet.src))
+      print(packet.latency >= INFINITY)
+      self.portsToEnts[port] = packet.src
+      self.entsToPorts[packet.src] = port
+      totalLatency = packet.latency + self.portsToLatencies[port]
+      self.set_distance_vectors(packet.destination, packet.src, totalLatency)
     elif isinstance(packet, basics.HostDiscoveryPacket):
       self.set_distance_vectors(packet.src, packet.src, self.portsToLatencies[port])
       self.portsToEnts[port] = packet.src
@@ -94,8 +118,10 @@ class DVRouter (basics.DVRouterBase):
     else:
       # Totally wrong behavior for the sake of demonstration only: send
       # the packet back to where it came from!
+      # print("Packet received at: " + str(self))
       bestPort = self.get_best_port_to_entity(packet.dst)
-      if self.is_valid_port(bestPort) && bestPort != port:
+      # print("Best port at " + str(self) + " is " + str(bestPort))
+      if self.is_valid_port(bestPort) and bestPort != port:
         self.send(packet, port=bestPort)
 
   def set_distance_vectors(self, destination, viaEntity, distance):
@@ -108,11 +134,12 @@ class DVRouter (basics.DVRouterBase):
 
     previousMinDistance = self.min_distance_to(destination)
     self.distanceVectors[destination][viaEntity] = [distance, api.current_time()]
+    # print("Setting distance vector from " + str(destination) + " via " + str(viaEntity))  
     newMinDistance = self.min_distance_to(destination)
 
     # If the routing table changes, we want to send out the corresponding updates
     if previousMinDistance != newMinDistance:
-        print("Self: " + str(self) + "Destination: " + str(destination) + "; viaEntity: " + str(viaEntity) + str(previousMinDistance) + " is now " + str(newMinDistance))
+        # print("Self: " + str(self) + "Destination: " + str(destination) + "; viaEntity: " + str(viaEntity) + str(previousMinDistance) + " is now " + str(newMinDistance))
         if self.POISON_MODE or not self.is_infinity(newMinDistance):
             self.send_packet_to_all_valid_neighbors(basics.RoutePacket(destination, newMinDistance))
 
@@ -150,9 +177,13 @@ class DVRouter (basics.DVRouterBase):
     Sends the specified packet to all valid (non-host) neighbors
     """
     for port, entity in self.portsToEnts.iteritems():
-        minDistance = self.min_distance_to(packet.destination)
-        if not isinstance(entity, basics.BasicHost) and (self.portsToEnts[port] not in self.distanceVectors[packet.destination] or self.distanceVectors[packet.destination][self.portsToEnts[port]][0] != minDistance): # We don't want to send this information to hosts
+        if not isinstance(entity, basics.BasicHost):
+          if self.passes_split_horizon(packet.destination, port):
+            # print("Sending packet with destination: " + str(packet.destination) + "; from " + str(self) + "; to " + str(self.portsToEnts[port]))
+            # print(str(self.portsToEnts))
             self.send(packet, port)
+          elif self.POISON_MODE:
+            self.send(basics.RoutePacket(packet.destination, INFINITY), port)
 
   def send_all_vectors_to(self, port):
     """
@@ -160,8 +191,13 @@ class DVRouter (basics.DVRouterBase):
     """
     for destination in self.distanceVectors:
         minDistance = self.min_distance_to(destination)
-        if (self.POISON_MODE or not self.is_infinity(minDistance)) and (self.portsToEnts[port] not in self.distanceVectors[destination] or self.distanceVectors[destination][self.portsToEnts[port]][0] != minDistance):
+        # print("Attempting to send destination: " + str(destination) + "to port: " + str(port))
+        if (self.POISON_MODE or not self.is_infinity(minDistance)):
+          if self.passes_split_horizon(destination, port):
+            # print("Sent!")
             self.send(basics.RoutePacket(destination, minDistance), port)
+          elif self.POISON_MODE:
+            self.send(basics.RoutePacket(destination, INFINITY), port)
 
   def get_best_port_to_entity(self, entity):
     """
@@ -171,6 +207,7 @@ class DVRouter (basics.DVRouterBase):
     """
     if entity in self.distanceVectors:
         distanceVector = self.distanceVectors[entity]
+        # print(distanceVector)
         # Here we pull out the entity whose stored distance is the lowest
         if distanceVector:
             minDistanceKey = min(distanceVector, key=lambda x: distanceVector[x][0])
@@ -200,4 +237,13 @@ class DVRouter (basics.DVRouterBase):
     """
     Called to determine if a value is infinity or greater.
     """
-    return value >= 16
+    return value >= INFINITY
+
+  def passes_split_horizon(self, destination, port):
+    minDistance = self.min_distance_to(destination)
+    if port in self.portsToEnts:
+      if self.portsToEnts[port] in self.distanceVectors[destination]:
+        if self.distanceVectors[destination][self.portsToEnts[port]][0] == minDistance:
+          return False
+
+    return True
