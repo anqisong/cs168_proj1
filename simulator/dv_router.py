@@ -75,6 +75,7 @@ class DVRouter (basics.DVRouterBase):
       distanceVector = self.distanceVectors[destination]
       for viaEntity, distanceList in distanceVector.iteritems():
         if viaEntity == affectedEntity:
+          print("Destination: " + str(destination) + "Affected Entity: " + str(affectedEntity))
           self.set_distance_vectors(destination, affectedEntity, INFINITY)
 
   def handle_link_down (self, port):
@@ -106,7 +107,6 @@ class DVRouter (basics.DVRouterBase):
         # Always update our distance vector table - we can figure out the best path later
         # print("Destination: " + str(packet.destination) + " Source: " + str(packet.src))
         # print(str(self) + "received packet with destination " + str(packet.destination) + " from " + str(packet.src))
-      print(packet.latency >= INFINITY)
       self.portsToEnts[port] = packet.src
       self.entsToPorts[packet.src] = port
       totalLatency = packet.latency + self.portsToLatencies[port]
@@ -150,8 +150,8 @@ class DVRouter (basics.DVRouterBase):
     When called, your router should send tables to neighbors.  It also might
     not be a bad place to check for whether any entries have expired.
     """
-    self.send_all_vectors_to_all_valid_neighbors()
     self.check_times()
+    self.send_all_vectors_to_all_valid_neighbors()
 
   def check_times(self):
     """
@@ -161,6 +161,7 @@ class DVRouter (basics.DVRouterBase):
         distanceVector = self.distanceVectors[destination]
         for viaEntity in distanceVector:
             # Don't expire host links or distances to yourself (who cares about that)
+            print(api.current_time())
             if not isinstance(viaEntity, basics.BasicHost) and api.current_time() - distanceVector[viaEntity][1] >= 15 and destination != viaEntity:
                 self.set_distance_vectors(destination, viaEntity, INFINITY)
 
